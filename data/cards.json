@@ -1,0 +1,70 @@
+{
+    "cards": [
+        {
+            "type": "card",
+            "name": "Irish Whip",
+            "meta": {
+                "cost": {
+                    "power": 5,
+                    "agility": 0,
+                    "promo": 0
+                },
+                "reward": {
+                    "heat": 5,
+                    "control": 5,
+                    "damage": 0
+                }
+            }
+        },
+        {
+            "type": "card",
+            "name": "Body Slam",
+            "meta": {
+                "cost": {
+                    "power": 5,
+                    "agility": 0,
+                    "promo": 0
+                },
+                "reward": {
+                    "heat": 5,
+                    "control": 5,
+                    "damage": 5
+                }
+            }
+        },
+        {
+            "type": "card",
+            "name": "Pump Up",
+            "meta": {
+                "action": "promo",
+                "cost": {
+                    "power": 0,
+                    "agility": 0,
+                    "promo": 10
+                },
+                "reward": {
+                    "heat": 10,
+                    "control": 10,
+                    "damage": 0
+                }
+            }
+        },
+        {
+            "type": "card",
+            "name": "Sick Burn",
+            "meta": {
+                "action": "promo",
+                "cost": {
+                    "power": 0,
+                    "agility": 0,
+                    "promo": 10
+                },
+                "reward": {
+                    "heat": 10,
+                    "control": 10,
+                    "damage": 0
+                }
+            }
+        }
+    ]
+}

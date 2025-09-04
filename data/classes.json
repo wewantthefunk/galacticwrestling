@@ -1,0 +1,24 @@
+{
+    "classes:": [
+        {
+            "type": "class",
+            "name": "high flyer",
+            "meta": {
+                "hp": 10,
+                "agility": 30,
+                "power": 10,
+                "promo": 0
+            }
+        },
+        {
+            "type": "class",
+            "name": "monster",
+            "meta": {
+                "hp": 30,
+                "agility": 0,
+                "power": 20,
+                "promo": 0
+            }
+        }
+    ]
+}

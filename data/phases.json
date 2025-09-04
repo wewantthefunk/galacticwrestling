@@ -1,0 +1,28 @@
+{
+    "phases": [
+        {
+            "type": "phase",
+            "name": "Pre Match",
+            "meta": {
+                "timing": -1,
+                "allowed": ["*"]
+            }
+        },
+        {
+            "type": "phase",
+            "name": "Promo",
+            "meta": {
+                "timing": 0,
+                "allowed": ["promo"]
+            }
+        },
+        {
+            "type": "phase",
+            "name": "Work",
+            "meta": {
+                "timing": 0,
+                "allowed": ["peacock","move","put over"]
+            }
+        }
+    ]
+}
