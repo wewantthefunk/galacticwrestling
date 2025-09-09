@@ -1,0 +1,3 @@
+EXIT_KEY = 'X'
+WRESTLER_FOLDER = 'wrestlers/'
+USER_WRESTLER_EXTENSION = ".uw"
