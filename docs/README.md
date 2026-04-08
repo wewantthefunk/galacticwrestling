@@ -12,4 +12,6 @@ Start here when returning after a break or onboarding a collaborator.
 
 AI opponents and seeding are summarized in [Game overview — AI opponents](game.md#ai-opponents-single-player) and [Plan 02](plans/02-ai-opponents-single-player.md).
 
+Match **prototype** (`galactic_wrestling.match`) and **full integration** roadmap: [Plan 03](plans/03-single-player-match-flow-and-engine.md), [Plan 04](plans/04-match-integration-and-remaining-systems.md).
+
 The repository root [README](../README.md) stays short: clone, bootstrap, test, run.
