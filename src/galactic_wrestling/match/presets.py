@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from galactic_wrestling.match.model import MatchCard
 
-# Ten cards per deck; mirrored totals for quick balance tests.
+# Ten cards per deck; mirrored totals for quick balance tests and :func:`deck_builder.build_match_decks`.
 _TEST_CARDS: tuple[MatchCard, ...] = (
     MatchCard("m1", "Jab", 1, 4, 3, 0),
     MatchCard("m2", "Block", 1, 2, 6, 0),
@@ -15,6 +15,8 @@ _TEST_CARDS: tuple[MatchCard, ...] = (
     MatchCard("m9", "Taunt", 0, 2, 2, 1),
     MatchCard("m10", "Finisher", 3, 8, 0, 0),
 )
+
+CANONICAL_TEN: tuple[MatchCard, ...] = _TEST_CARDS
 
 
 def mirror_decks() -> tuple[list[MatchCard], list[MatchCard]]:

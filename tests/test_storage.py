@@ -5,8 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from galactic_wrestling import storage
 from galactic_wrestling import auth
+from galactic_wrestling import storage
+from galactic_wrestling.match.model import MatchOutcome
 from galactic_wrestling.models import Alignment, Archetype
 
 
@@ -120,3 +121,28 @@ def test_rename_name_too_long(isolated_data_dir: Path) -> None:
 def test_delete_missing_file_no_error(isolated_data_dir: Path) -> None:
     a = _account(isolated_data_dir)
     storage.delete_wrestler(a.player_id, "00000000-0000-0000-0000-000000000000")
+
+
+def test_load_match_stats_missing(isolated_data_dir: Path) -> None:
+    a = _account(isolated_data_dir)
+    assert storage.load_match_stats(a.player_id) == (0, 0)
+
+
+def test_record_match_win_loss_and_draw(isolated_data_dir: Path) -> None:
+    a = _account(isolated_data_dir)
+    storage.record_match_outcome(a.player_id, MatchOutcome.PLAYER_WINS)
+    assert storage.load_match_stats(a.player_id) == (1, 0)
+    storage.record_match_outcome(a.player_id, MatchOutcome.AI_WINS)
+    assert storage.load_match_stats(a.player_id) == (1, 1)
+    storage.record_match_outcome(a.player_id, MatchOutcome.DRAW)
+    assert storage.load_match_stats(a.player_id) == (1, 1)
+    storage.record_match_outcome(a.player_id, MatchOutcome.ONGOING)
+    assert storage.load_match_stats(a.player_id) == (1, 1)
+
+
+def test_load_match_stats_with_file(isolated_data_dir: Path) -> None:
+    a = _account(isolated_data_dir)
+    path = storage._stats_path(a.player_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"wins": 2, "losses": 3}\n', encoding="utf-8")
+    assert storage.load_match_stats(a.player_id) == (2, 3)

@@ -1,17 +1,23 @@
 from __future__ import annotations
 
+import random
+
 from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Input, Label, ListItem, ListView, Select, Static
+from textual.widgets import Button, Footer, Header, Input, Label, ListItem, ListView, Log, Select, Static
 
 from galactic_wrestling import auth, storage
 from galactic_wrestling.ai_opponents import list_ai_wrestlers
 from galactic_wrestling.auth import Account
 from galactic_wrestling.cards import format_starter_deck_preview
 from galactic_wrestling.gimmicks import GIMMICKS, gimmick_by_id
-from galactic_wrestling.models import Alignment, Archetype
+from galactic_wrestling.match.ai_policy import choose_ai_hand_index
+from galactic_wrestling.match.deck_builder import build_match_decks
+from galactic_wrestling.match.engine import MatchState
+from galactic_wrestling.match.model import MatchOutcome
+from galactic_wrestling.models import Alignment, Archetype, MatchLocation, MatchStipulation, Wrestler
 from galactic_wrestling.ui.wrestler_list_ids import (
     wrestler_list_item_dom_id,
     wrestler_uuid_from_list_item_dom_id,
@@ -136,44 +142,408 @@ class MainMenuScreen(Screen[None]):
 
     @on(Button.Pressed, "#mm_sp")
     def open_single_player(self) -> None:
-        self.app.push_screen(SinglePlayerScreen())
+        pid = self.app.player_id
+        assert pid is not None
+        if storage.count_wrestlers(pid) < 1:
+            self.app.notify(
+                "Create at least one wrestler first (Manage wrestlers).",
+                severity="warning",
+            )
+            return
+        self.app.push_screen(SinglePlayerPickWrestlerScreen())
 
     @on(Button.Pressed, "#mm_logout")
     def logout_btn(self) -> None:
         self._logout()
 
 
-class SinglePlayerScreen(Screen[None]):
-    """Lists AI opponents; match flow is future work."""
+class SinglePlayerPickWrestlerScreen(Screen[None]):
+    """Choose your wrestler for single-player."""
 
     BINDINGS = [("escape", "back", "Back")]
 
+    def __init__(self) -> None:
+        super().__init__()
+        self._selected_id: str | None = None
+
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Vertical(id="sp_root"):
-            yield Label("Single player — vs AI opponents", id="sp_title")
-            yield Label("Match engine coming soon. Available opponents:", id="sp_sub")
-            opponents = sorted(list_ai_wrestlers(), key=lambda w: w.name.lower())
-            if not opponents:
-                yield Static(
-                    "No AI opponents on disk. Run: python -m galactic_wrestling.ai_opponents",
-                    id="sp_empty",
-                )
-            else:
-                for w in opponents:
-                    yield Label(
-                        f"  • {w.name} ({w.archetype.value}) — {w.alignment.value} — {w.gimmick_id}"
-                    )
-            yield Button("Back", id="sp_back")
+        with Vertical(id="sp_pw_root"):
+            yield Label("Single player — pick your wrestler", id="sp_pw_title")
+            yield ListView(id="sp_pw_list")
+            with Horizontal():
+                yield Button("Next", variant="primary", id="sp_pw_next")
+                yield Button("Back", id="sp_pw_back")
         yield Footer()
+
+    async def on_mount(self) -> None:
+        await self._reload()
+
+    async def _reload(self) -> None:
+        lv = self.query_one("#sp_pw_list", ListView)
+        await lv.clear()
+        pid = self.app.player_id
+        assert pid is not None
+        items = [
+            ListItem(Label(w.name), id=wrestler_list_item_dom_id(w.id))
+            for w in storage.list_wrestlers(pid)
+        ]
+        if items:
+            await lv.extend(items)
+        self._selected_id = None
 
     def action_back(self) -> None:
         self.app.pop_screen()
 
-    @on(Button.Pressed, "#sp_back")
-    def back_pressed(self) -> None:
+    @on(Button.Pressed, "#sp_pw_back")
+    def back_btn(self) -> None:
         self.app.pop_screen()
 
+    @on(ListView.Selected, "#sp_pw_list")
+    def on_pick(self, event: ListView.Selected) -> None:
+        item = event.item
+        dom_id = item.id or ""
+        try:
+            self._selected_id = wrestler_uuid_from_list_item_dom_id(dom_id)
+        except ValueError:
+            self._selected_id = None
+
+    @on(Button.Pressed, "#sp_pw_next")
+    def next_step(self) -> None:
+        if not self._selected_id:
+            self.app.notify("Select a wrestler first.", severity="error")
+            return
+        pid = self.app.player_id
+        assert pid is not None
+        wrestler = next(
+            (w for w in storage.list_wrestlers(pid) if w.id == self._selected_id),
+            None,
+        )
+        if wrestler is None:
+            self.app.notify("Wrestler not found.", severity="error")
+            return
+        self.app.push_screen(SinglePlayerPickAiScreen(wrestler))
+
+
+class SinglePlayerPickAiScreen(Screen[None]):
+    """Random or specific AI opponent."""
+
+    BINDINGS = [("escape", "back", "Back")]
+
+    def __init__(self, player_wrestler: Wrestler) -> None:
+        super().__init__()
+        self._player_wrestler = player_wrestler
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        with Vertical(id="sp_ai_root"):
+            yield Label(
+                f"Opponent for {self._player_wrestler.name}",
+                id="sp_ai_title",
+            )
+            yield Label("AI opponent")
+            opts: list[tuple[str, str]] = [("Random AI opponent", "__random__")]
+            for w in list_ai_wrestlers():
+                opts.append((f"{w.name} ({w.archetype.value})", w.id))
+            yield Select(opts, id="sp_ai_select", allow_blank=False)
+            with Horizontal():
+                yield Button("Next", variant="primary", id="sp_ai_next")
+                yield Button("Back", id="sp_ai_back")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.query_one("#sp_ai_select", Select).focus()
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+    @on(Button.Pressed, "#sp_ai_back")
+    def back_btn(self) -> None:
+        self.app.pop_screen()
+
+    @on(Button.Pressed, "#sp_ai_next")
+    def next_step(self) -> None:
+        sel = self.query_one("#sp_ai_select", Select)
+        v = sel.value
+        if v is None:
+            self.app.notify("Pick an AI opponent.", severity="error")
+            return
+        rng = random.Random()
+        opponents = list_ai_wrestlers()
+        if not opponents:
+            self.app.notify(
+                "No AI opponents on disk. Run: python -m galactic_wrestling.ai_opponents",
+                severity="error",
+            )
+            return
+        if v == "__random__":
+            ai = rng.choice(opponents)
+        else:
+            ai = next((w for w in opponents if w.id == str(v)), None)
+            if ai is None:
+                self.app.notify("AI opponent not found.", severity="error")
+                return
+        self.app.push_screen(SinglePlayerLocationScreen(self._player_wrestler, ai))
+
+
+class SinglePlayerLocationScreen(Screen[None]):
+    """Match location (modifiers cosmetic until rules expand)."""
+
+    BINDINGS = [("escape", "back", "Back")]
+
+    def __init__(self, player_wrestler: Wrestler, ai_wrestler: Wrestler) -> None:
+        super().__init__()
+        self._player_wrestler = player_wrestler
+        self._ai_wrestler = ai_wrestler
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        with Vertical(id="sp_loc_root"):
+            yield Label("Match location", id="sp_loc_title")
+            yield Select(
+                [(loc.value, loc.value) for loc in MatchLocation],
+                id="sp_loc_select",
+                allow_blank=False,
+            )
+            with Horizontal():
+                yield Button("Next", variant="primary", id="sp_loc_next")
+                yield Button("Back", id="sp_loc_back")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.query_one("#sp_loc_select", Select).focus()
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+    @on(Button.Pressed, "#sp_loc_back")
+    def back_btn(self) -> None:
+        self.app.pop_screen()
+
+    @on(Button.Pressed, "#sp_loc_next")
+    def next_step(self) -> None:
+        sel = self.query_one("#sp_loc_select", Select)
+        v = sel.value
+        if v is None:
+            self.app.notify("Pick a location.", severity="error")
+            return
+        loc = MatchLocation(str(v))
+        self.app.push_screen(
+            SinglePlayerStipulationScreen(self._player_wrestler, self._ai_wrestler, loc)
+        )
+
+
+class SinglePlayerStipulationScreen(Screen[None]):
+    """Match stipulation then start."""
+
+    BINDINGS = [("escape", "back", "Back")]
+
+    def __init__(
+        self, player_wrestler: Wrestler, ai_wrestler: Wrestler, location: MatchLocation
+    ) -> None:
+        super().__init__()
+        self._player_wrestler = player_wrestler
+        self._ai_wrestler = ai_wrestler
+        self._location = location
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        with Vertical(id="sp_stip_root"):
+            yield Label("Match stipulation", id="sp_stip_title")
+            yield Select(
+                [(st.value, st.value) for st in MatchStipulation],
+                id="sp_stip_select",
+                allow_blank=False,
+            )
+            with Horizontal():
+                yield Button("Start match", variant="primary", id="sp_stip_start")
+                yield Button("Back", id="sp_stip_back")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.query_one("#sp_stip_select", Select).focus()
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+    @on(Button.Pressed, "#sp_stip_back")
+    def back_btn(self) -> None:
+        self.app.pop_screen()
+
+    @on(Button.Pressed, "#sp_stip_start")
+    def start(self) -> None:
+        sel = self.query_one("#sp_stip_select", Select)
+        v = sel.value
+        if v is None:
+            self.app.notify("Pick a stipulation.", severity="error")
+            return
+        stip = MatchStipulation(str(v))
+        self.app.push_screen(
+            MatchScreen(
+                self._player_wrestler,
+                self._ai_wrestler,
+                self._location,
+                stip,
+            )
+        )
+
+
+class MatchScreen(Screen[None]):
+    """Play a single-player match vs AI (two-lane clash, deck combat)."""
+
+    def __init__(
+        self,
+        player_wrestler: Wrestler,
+        ai_wrestler: Wrestler,
+        location: MatchLocation,
+        stipulation: MatchStipulation,
+    ) -> None:
+        super().__init__()
+        self._player_wrestler = player_wrestler
+        self._ai_wrestler = ai_wrestler
+        self._location = location
+        self._stipulation = stipulation
+        self._rng = random.Random(random.randrange(2**63))
+        deck_rng = random.Random(self._rng.random())
+        pd, ad = build_match_decks(player_wrestler, ai_wrestler, deck_rng)
+        self._state = MatchState.from_decks(pd, ad, rng=self._rng)
+        self._ai_rng = random.Random(self._rng.random())
+        self._hand_index = 0
+        self._over = False
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        with Vertical(id="match_root"):
+            pid = self.app.player_id
+            wins, losses = (0, 0)
+            if pid is not None:
+                wins, losses = storage.load_match_stats(pid)
+            yield Label(
+                f"{self._location.value} · {self._stipulation.value} · Record W{wins}-L{losses}",
+                id="match_meta",
+            )
+            with Horizontal(id="match_columns"):
+                with Vertical(id="match_p_col"):
+                    yield Label(
+                        f"You: {self._player_wrestler.name} ({self._player_wrestler.archetype.value})",
+                        id="match_p_title",
+                    )
+                    yield Label("", id="match_p_hp")
+                with Vertical(id="match_ai_col"):
+                    yield Label(
+                        f"AI: {self._ai_wrestler.name} ({self._ai_wrestler.archetype.value})",
+                        id="match_ai_title",
+                    )
+                    yield Label("", id="match_ai_hp")
+            yield Log(id="match_log", max_lines=200, highlight=True)
+            yield Label("Your hand (select a card, then Play)", id="match_hand_hint")
+            yield ListView(id="match_hand")
+            with Horizontal(id="match_actions"):
+                yield Button("Play selected card", variant="primary", id="match_play")
+                yield Button("Forfeit", variant="error", id="match_forfeit")
+                yield Button("Back to menu", id="match_done", disabled=True)
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self._sync_hp()
+        log = self.query_one("#match_log", Log)
+        log.write_line(
+            f"Fight! {self._player_wrestler.name} vs {self._ai_wrestler.name}."
+        )
+        self.call_later(self._reload_hand)
+
+    def _sync_hp(self) -> None:
+        self.query_one("#match_p_hp", Label).update(
+            f"Health: {self._state.player_health}  ·  Hand: {len(self._state.player_hand)}"
+        )
+        self.query_one("#match_ai_hp", Label).update(
+            f"Health: {self._state.ai_health}  ·  Hand: {len(self._state.ai_hand)}"
+        )
+
+    async def _reload_hand(self) -> None:
+        lv = self.query_one("#match_hand", ListView)
+        await lv.clear()
+        for i, c in enumerate(self._state.player_hand):
+            await lv.extend(
+                [
+                    ListItem(
+                        Label(f"{c.name}  O{c.offense} D{c.defense}  ${c.cost}"),
+                        id=f"mh{i}",
+                    )
+                ]
+            )
+        if self._state.player_hand:
+            lv.index = 0
+            self._hand_index = 0
+
+    @on(ListView.Selected, "#match_hand")
+    def hand_selected(self, event: ListView.Selected) -> None:
+        self._hand_index = int(event.index)
+
+    @on(Button.Pressed, "#match_play")
+    async def play_round_btn(self) -> None:
+        if self._over:
+            return
+        if not self._state.player_hand or not self._state.ai_hand:
+            await self._stalemate()
+            return
+        if self._hand_index < 0 or self._hand_index >= len(self._state.player_hand):
+            self.app.notify("Select a card in your hand.", severity="error")
+            return
+        ai_i = choose_ai_hand_index(self._state, self._ai_rng)
+        r = self._state.play_round(self._hand_index, ai_i)
+        log = self.query_one("#match_log", Log)
+        log.write_line(
+            f"You: {r.player_card.name}  |  AI: {r.ai_card.name}  |  "
+            f"dmg to you {r.damage_to_player}, dmg to AI {r.damage_to_ai}"
+        )
+        self._sync_hp()
+        await self._reload_hand()
+        outcome = self._state.outcome()
+        if outcome != MatchOutcome.ONGOING:
+            await self._finish(outcome)
+
+    async def _stalemate(self) -> None:
+        self._over = True
+        log = self.query_one("#match_log", Log)
+        log.write_line("Neither side can play — match ends in a draw.")
+        self.query_one("#match_play", Button).disabled = True
+        self.query_one("#match_forfeit", Button).disabled = True
+        self.query_one("#match_done", Button).disabled = False
+
+    async def _finish(self, outcome: MatchOutcome) -> None:
+        self._over = True
+        pid = self.app.player_id
+        if pid is not None:
+            storage.record_match_outcome(pid, outcome)
+        log = self.query_one("#match_log", Log)
+        if outcome == MatchOutcome.PLAYER_WINS:
+            log.write_line("You win!")
+        elif outcome == MatchOutcome.AI_WINS:
+            log.write_line("You lose.")
+        else:
+            log.write_line("Draw.")
+        meta = self.query_one("#match_meta", Label)
+        if pid is not None:
+            w, l = storage.load_match_stats(pid)
+            meta.update(
+                f"{self._location.value} · {self._stipulation.value} · Record W{w}-L{l}"
+            )
+        self.query_one("#match_play", Button).disabled = True
+        self.query_one("#match_forfeit", Button).disabled = True
+        self.query_one("#match_done", Button).disabled = False
+
+    @on(Button.Pressed, "#match_forfeit")
+    async def forfeit(self) -> None:
+        if self._over:
+            return
+        self._state.player_health = 0
+        self._sync_hp()
+        await self._finish(MatchOutcome.AI_WINS)
+
+    @on(Button.Pressed, "#match_done")
+    def done(self) -> None:
+        self.app.pop_screen()
 
 class RosterScreen(Screen[None]):
     BINDINGS = [("escape", "back", "Back")]

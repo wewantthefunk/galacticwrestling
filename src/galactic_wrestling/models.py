@@ -20,6 +20,20 @@ class Alignment(StrEnum):
     HEEL = "Heel"
 
 
+class MatchLocation(StrEnum):
+    REGULAR_RING = "Regular ring"
+    CAGE = "Cage match"
+    PARKING_LOT = "Parking lot match"
+    ARENA = "Anywhere in the arena"
+
+
+class MatchStipulation(StrEnum):
+    STRAIGHT = "Straight rules"
+    ANYTHING_GOES = "Anything goes"
+    COUNT_OUT = "Count out"
+    TAP_OUT = "Tap out"
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 

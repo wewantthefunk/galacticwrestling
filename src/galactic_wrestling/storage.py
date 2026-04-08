@@ -5,9 +5,40 @@ import uuid
 from pathlib import Path
 
 from galactic_wrestling.config import data_dir
+from galactic_wrestling.match.model import MatchOutcome
 from galactic_wrestling.models import Alignment, Archetype, Wrestler, utc_now_iso
 
 MAX_WRESTLERS = 5
+
+
+def _stats_path(player_id: str) -> Path:
+    return data_dir() / "players" / player_id / "stats.json"
+
+
+def load_match_stats(player_id: str) -> tuple[int, int]:
+    """Return ``(wins, losses)`` for single-player matches."""
+    path = _stats_path(player_id)
+    if not path.is_file():
+        return (0, 0)
+    with path.open(encoding="utf-8") as f:
+        data = json.load(f)
+    return (int(data.get("wins", 0)), int(data.get("losses", 0)))
+
+
+def record_match_outcome(player_id: str, outcome: MatchOutcome) -> None:
+    """Update wins/losses; draws do not change stats."""
+    if outcome == MatchOutcome.DRAW or outcome == MatchOutcome.ONGOING:
+        return
+    wins, losses = load_match_stats(player_id)
+    if outcome == MatchOutcome.PLAYER_WINS:
+        wins += 1
+    else:
+        losses += 1
+    path = _stats_path(player_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump({"wins": wins, "losses": losses}, f, indent=2)
+        f.write("\n")
 
 
 def _wrestlers_dir(player_id: str) -> Path:
